@@ -2,6 +2,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace BlazorEcommerce.Server.Services.AuthService
 {
@@ -101,26 +102,56 @@ namespace BlazorEcommerce.Server.Services.AuthService
 
         private string CreateToken(User user)
         {
-            List<Claim> claims = new List<Claim>
+            try
             {
-                new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-                new Claim(ClaimTypes.Name, user.Email),
+                var secret = _configuration["AppSettings:Token"]
+                     ?? throw new InvalidOperationException("Missing signing key");
+
+                // If secret is Base64:
+                // var key = new SymmetricSecurityKey(Convert.FromBase64String(secret));
+                // If secret is plain text (make it long: 64+ chars):
+                var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
+
+                if (key.KeySize < 256) // bits; prefer 512 for HS512
+                    throw new InvalidOperationException("Signing key too short for HS512. Use 32–64 bytes+.");
+
+                var claims = new List<Claim>
+            {
+                new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+                new Claim(JwtRegisteredClaimNames.Email, user.Email),
                 new Claim(ClaimTypes.Role, user.Role)
             };
 
-            var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8
-                .GetBytes(_configuration.GetSection("AppSettings:Token").Value));
+                //List<Claim> claims = new List<Claim>
+                //{
+                //    new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+                //    new Claim(ClaimTypes.Name, user.Email),
+                //    new Claim(ClaimTypes.Role, user.Role)
+                //};
 
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha512Signature);
+                //var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8
+                //    .GetBytes(_configuration.GetSection("AppSettings:Token").Value));
 
-            var token = new JwtSecurityToken(
-                    claims: claims,
-                    expires: DateTime.Now.AddDays(1),
-                    signingCredentials: creds);
+                var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha512);
 
-            var jwt = new JwtSecurityTokenHandler().WriteToken(token);
+                //var token = new JwtSecurityToken(
+                //        claims: claims,
+                //        expires: DateTime.Now.AddDays(1),
+                //        signingCredentials: creds);
+                var token = new JwtSecurityToken(
+                            issuer: _configuration["Jwt:Issuer"],
+                            audience: _configuration["Jwt:Audience"],
+                            claims: claims,
+                            expires: DateTime.UtcNow.AddDays(1),
+                            signingCredentials: creds);
 
-            return jwt;
+                var jwt = new JwtSecurityTokenHandler().WriteToken(token);
+
+                return jwt;
+            }catch (Exception ex)
+            {
+                throw ex;
+            }
         }
 
         public async Task<ServiceResponse<bool>> ChangePassword(int userId, string newPassword)
